@@ -41,8 +41,8 @@ function csvEscape(value: string | number): string {
 }
 
 export function expensesToCSV(expenses: Expense[]): string {
-  const header = ["Date", "Category", "Description", "Amount"];
-  const rows = expenses.map((e) => [e.date, e.category, e.description, e.amount.toFixed(2)]);
+  const header = ["Date", "Category", "Amount", "Description"];
+  const rows = expenses.map((e) => [e.date, e.category, e.amount.toFixed(2), e.description]);
   return [header, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
 }
 
