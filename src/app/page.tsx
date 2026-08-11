@@ -1,101 +1,175 @@
-import Image from "next/image";
+"use client";
+
+import { useMemo, useState } from "react";
+import Charts from "@/components/Charts";
+import ConfirmDialog from "@/components/ConfirmDialog";
+import ExpenseForm from "@/components/ExpenseForm";
+import ExpenseList from "@/components/ExpenseList";
+import ExportButton from "@/components/ExportButton";
+import FilterBar from "@/components/FilterBar";
+import Modal from "@/components/Modal";
+import SummaryCards from "@/components/SummaryCards";
+import Toast, { type ToastState } from "@/components/Toast";
+import { useExpenses } from "@/lib/storage";
+import type { Expense, ExpenseFilters, ExpenseInput } from "@/lib/types";
+
+const EMPTY_FILTERS: ExpenseFilters = {
+  search: "",
+  category: "All",
+  startDate: "",
+  endDate: "",
+};
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const { expenses, isLoaded, addExpense, updateExpense, deleteExpense, clearAll } = useExpenses();
+  const [filters, setFilters] = useState<ExpenseFilters>(EMPTY_FILTERS);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
+  const [isClearOpen, setIsClearOpen] = useState(false);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  function notify(message: string, type: ToastState["type"] = "success") {
+    setToast({ id: Date.now(), message, type });
+  }
+
+  const filteredExpenses = useMemo(() => {
+    const search = filters.search.trim().toLowerCase();
+    return expenses
+      .filter((e) => (search ? e.description.toLowerCase().includes(search) : true))
+      .filter((e) => (filters.category !== "All" ? e.category === filters.category : true))
+      .filter((e) => (filters.startDate ? e.date >= filters.startDate : true))
+      .filter((e) => (filters.endDate ? e.date <= filters.endDate : true))
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt.localeCompare(a.createdAt)));
+  }, [expenses, filters]);
+
+  function openAddForm() {
+    setEditingExpense(null);
+    setIsFormOpen(true);
+  }
+
+  function openEditForm(expense: Expense) {
+    setEditingExpense(expense);
+    setIsFormOpen(true);
+  }
+
+  function closeForm() {
+    setIsFormOpen(false);
+    setEditingExpense(null);
+  }
+
+  function handleSubmit(input: ExpenseInput) {
+    if (editingExpense) {
+      updateExpense(editingExpense.id, input);
+      notify("Expense updated successfully.");
+    } else {
+      addExpense(input);
+      notify("Expense added successfully.");
+    }
+    closeForm();
+  }
+
+  function confirmDelete() {
+    if (!deleteTarget) return;
+    deleteExpense(deleteTarget.id);
+    notify("Expense deleted.");
+    setDeleteTarget(null);
+  }
+
+  function confirmClearAll() {
+    clearAll();
+    notify("All expenses cleared.");
+    setIsClearOpen(false);
+  }
+
+  return (
+    <div className="min-h-screen">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="flex items-center gap-2">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-lg text-white">
+              💸
+            </span>
+            <div>
+              <h1 className="text-lg font-semibold text-slate-900">ExpenseTracker</h1>
+              <p className="text-xs text-slate-400">Manage your personal finances</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <ExportButton expenses={filteredExpenses} />
+            <button
+              onClick={openAddForm}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+              </svg>
+              Add Expense
+            </button>
+          </div>
         </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6">
+        {!isLoaded ? (
+          <div className="flex items-center justify-center py-24">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+          </div>
+        ) : (
+          <>
+            <SummaryCards expenses={expenses} />
+            <Charts expenses={expenses} />
+
+            <FilterBar
+              filters={filters}
+              onChange={setFilters}
+              onReset={() => setFilters(EMPTY_FILTERS)}
+              resultCount={filteredExpenses.length}
+            />
+
+            <ExpenseList expenses={filteredExpenses} onEdit={openEditForm} onDelete={setDeleteTarget} />
+
+            {expenses.length > 0 && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setIsClearOpen(true)}
+                  className="text-xs font-medium text-slate-400 transition hover:text-red-600"
+                >
+                  Clear all data
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+      <Modal title={editingExpense ? "Edit Expense" : "Add Expense"} isOpen={isFormOpen} onClose={closeForm}>
+        <ExpenseForm initialValue={editingExpense} onSubmit={handleSubmit} onCancel={closeForm} />
+      </Modal>
+
+      <ConfirmDialog
+        isOpen={Boolean(deleteTarget)}
+        title="Delete Expense"
+        message={
+          deleteTarget
+            ? `Are you sure you want to delete "${deleteTarget.description}"? This action cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={isClearOpen}
+        title="Clear All Data"
+        message="This will permanently delete all your expenses from this browser. This action cannot be undone."
+        confirmLabel="Clear All"
+        onConfirm={confirmClearAll}
+        onCancel={() => setIsClearOpen(false)}
+      />
+
+      <Toast toast={toast} onDismiss={() => setToast(null)} />
     </div>
   );
 }
