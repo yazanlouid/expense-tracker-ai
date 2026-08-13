@@ -8,6 +8,8 @@ Systematic technical analysis of three competing data-export implementations in 
 | `feature-data-export-v2` | Advanced export: multiple formats + filtering |
 | `feature-data-export-v3` | Cloud-integrated Export Center: templates, integrations, scheduling, sharing |
 
+> **Outcome (2026-08-13):** **v3 was selected and shipped.** It was merged to `master` via `feature/data-export`, and the `feature-data-export-v3` branch has since been deleted — its code is now the `src/components/cloud-export/` + `src/lib/cloudExport/` feature described in `CLAUDE.md`, so read `master` rather than that branch for current behavior. `feature-data-export-v1` and `feature-data-export-v2` still exist as unmerged branches and are preserved for reference only; neither merges cleanly into `master` now, since v3 deleted the `expensesToCSV`/`downloadCSV` helpers in `src/lib/utils.ts` that v1 edits, and v2 would add a second, parallel export UI alongside the shipped one. Treat the comparison below as a historical record of the decision, not as a description of the current tree.
+
 All three branches share the same base commit (`8655134`, "Initial expense tracker implementation") and were developed independently from that point rather than incrementally on top of one another — `v2` and `v3` do not contain `v1`'s changes, and vice versa. The whole app is a client-only Next.js SPA with `localStorage`-backed persistence (`src/lib/storage.ts`) and no server/API routes, which shapes every version's export approach: "export" always means "serialize in-memory data to a `Blob` and trigger a browser download," never a server-generated file.
 
 ---

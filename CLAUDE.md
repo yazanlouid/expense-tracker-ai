@@ -21,7 +21,7 @@ This is a **fully client-side Next.js 14 App Router SPA** — there are no API r
 
 - `src/lib/types.ts` — the core domain type, `Expense` (`id`, `date` as ISO string, `amount`, `category`, `description`, `createdAt`), plus `ExpenseCategory` and `ExpenseFilters`.
 - `src/lib/storage.ts` — `useExpenses()` is the single source of truth for expense data. On first mount it loads from `localStorage` (key `expense-tracker:expenses`), seeding 10 demo rows if nothing is stored yet; every subsequent state change is written back to `localStorage` in a `useEffect`. Exposes `addExpense`/`updateExpense`/`deleteExpense`/`clearAll`.
-- `src/lib/analytics.ts` — pure functions over `Expense[]` (totals, category breakdowns, monthly trend) consumed by `SummaryCards` and `Charts`.
+- `src/lib/analytics.ts` — pure functions over `Expense[]`. Two layers: the original aggregates (totals, category breakdowns, monthly trend) consumed by `SummaryCards` and `Charts`, and the period-analysis helpers below them (`resolvePeriod`, `previousRange`, `expensesInRange`, `statsForRange`, `categoryComparison`, `trendSeries`, `pickGranularity`) that drive the analytics dashboard.
 - `src/lib/categories.ts` — `CATEGORY_META`, the single source of truth mapping each `ExpenseCategory` to its display color, badge class, and emoji icon; used by both the charts and `CategoryBadge`.
 - `src/lib/utils.ts` — generic formatting helpers (`formatCurrency`, `formatDate`, `todayISO`, `monthKey`).
 
@@ -30,6 +30,18 @@ This is a **fully client-side Next.js 14 App Router SPA** — there are no API r
 ### Component structure
 
 `src/components/` holds general dashboard UI: `ExpenseForm`, `ExpenseList`, `FilterBar`, `Charts` (recharts), `SummaryCards`, `CategoryBadge`, `Modal`, `ConfirmDialog`, `Toast`. These are conventional presentational components driven by props from `page.tsx`.
+
+Two sub-features live in their own directories and are documented separately below: `src/components/analytics/` and `src/components/cloud-export/`.
+
+### Analytics dashboard (`src/components/analytics/` + period helpers in `src/lib/analytics.ts`)
+
+`AnalyticsDashboard.tsx` is rendered in `page.tsx` directly below `Charts` and owns its own period state — it is *not* wired to the page's `ExpenseFilters`. It receives the full `expenses` array and slices it by the selected period itself.
+
+- Period keys (`thisMonth`, `lastMonth`, `last3Months`, `last6Months`, `yearToDate`, `allTime`) resolve to a concrete `DateRange` via `resolvePeriod`; every period except `allTime` is compared against the equally-long range immediately preceding it (`previousRange`).
+- Trend granularity is chosen by range length in `pickGranularity`: day (≤31), week (≤120), month beyond that. `trendSeries` emits every bucket including empty ones so the x-axis stays continuous.
+- **Dates are parsed as local midnight** by an internal `parseISO`, not `new Date(iso)` — the latter parses as UTC and shifts expenses into the wrong bucket west of Greenwich. Keep that when adding date logic.
+- `percentChange` returns `null` when the baseline is 0 so the UI can show "No prior data" instead of a misleading +100%. `allTime` has no comparison range at all.
+- **Accessibility note:** `CATEGORY_META`'s colors are not colorblind-safe — Entertainment (`#a855f7`) and Transportation (`#3b82f6`) are near-identical under deuteranopia (ΔE 0.9). `CategoryBreakdown` therefore direct-labels every row with name and amount, so color never carries identity alone. Preserve that if you restyle it. The pre-existing pie chart in `Charts.tsx` does still rely on color to separate slices.
 
 ### Export Center (`src/components/cloud-export/` + `src/lib/cloudExport/`)
 
