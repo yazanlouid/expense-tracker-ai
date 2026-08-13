@@ -11,3 +11,18 @@ body {
   color: var(--foreground);
   background: var(--background);
 }
+
+@keyframes export-center-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.export-center-panel {
+  animation: export-center-in 180ms ease-out;
+}
