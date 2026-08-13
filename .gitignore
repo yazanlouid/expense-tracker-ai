@@ -34,3 +34,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# claude code local state
+# worktrees/ holds live git worktrees (full checkouts) — never commit these
+/.claude/worktrees/
+/.claude/settings.local.json
+/.claude/scheduled_tasks.lock
