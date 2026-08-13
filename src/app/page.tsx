@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import AnalyticsDashboard from "@/components/analytics/AnalyticsDashboard";
 import Charts from "@/components/Charts";
@@ -99,6 +100,15 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              href="/insights"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3.5 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                <path d="M15.5 2A1.5 1.5 0 0114 3.5v13a1.5 1.5 0 003 0v-13A1.5 1.5 0 0015.5 2zM10 7a1.5 1.5 0 00-1.5 1.5v8a1.5 1.5 0 003 0v-8A1.5 1.5 0 0010 7zM4.5 11A1.5 1.5 0 003 12.5v4a1.5 1.5 0 003 0v-4A1.5 1.5 0 004.5 11z" />
+              </svg>
+              Insights
+            </Link>
             <ExportCenterTrigger onClick={() => setIsExportCenterOpen(true)} disabled={expenses.length === 0} />
             <button
               onClick={openAddForm}

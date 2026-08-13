@@ -299,3 +299,117 @@ export function trendSeries(
 
   return points;
 }
+
+/* ------------------------------------------------------------------ *
+ * Monthly insights
+ *
+ * Powers the insights screen. There is no budget anywhere in the domain
+ * model, so the "budget streak" needs a target to measure against — the
+ * helpers below derive one from the user's own history rather than
+ * inventing a number or demanding they configure one first.
+ * ------------------------------------------------------------------ */
+
+export interface BudgetStreak {
+  /** Consecutive days ending today on which month-to-date spending was on pace. */
+  days: number;
+  /** The month's target; null when there is no history to derive one from. */
+  monthlyBudget: number | null;
+  /** Share of the target allowed by today — `monthlyBudget * daysElapsed / daysInMonth`. */
+  allowedSoFar: number;
+  /** Month-to-date spend, for rendering the on/off pace message. */
+  spentSoFar: number;
+  /** The most recent off-pace day, or null when the streak covers the whole month. */
+  brokenOn: string | null;
+}
+
+/**
+ * The previous calendar month's total, used as the default target for this
+ * month: "keep this month at or under what last month cost".
+ *
+ * Deliberately measured over a *closed* prior month — deriving the target from
+ * a window that includes the current month would let today's spending move its
+ * own goalposts. Falls back to the lifetime daily average scaled to a month
+ * when last month is empty, and to null when there is no history at all, so
+ * the UI can show an empty state instead of a made-up goal.
+ */
+export function suggestedMonthlyBudget(
+  expenses: Expense[],
+  reference: Date = new Date(),
+): number | null {
+  if (expenses.length === 0) return null;
+
+  const lastMonth = resolvePeriod("lastMonth", expenses, reference);
+  const priorExpenses = expensesInRange(expenses, lastMonth);
+  if (priorExpenses.length > 0) return totalSpending(priorExpenses);
+
+  const lifetime = resolvePeriod("allTime", expenses, reference);
+  const perDay = totalSpending(expenses) / Math.max(1, rangeLengthInDays(lifetime));
+  return perDay * daysInMonth(reference);
+}
+
+function daysInMonth(reference: Date): number {
+  // Day 0 of the following month is the last day of this one.
+  return new Date(reference.getFullYear(), reference.getMonth() + 1, 0).getDate();
+}
+
+/**
+ * How many days in a row, counting back from `reference`, month-to-date
+ * spending has stayed within its pro-rated share of the monthly budget.
+ *
+ * Measured against the running total rather than each day's spend on its own:
+ * most days have no expenses at all, so a per-day rule would compare every
+ * actual purchase against an average dragged down by the empty days and break
+ * the streak almost every time money is spent. Pacing the cumulative total is
+ * both the standard "am I still on budget" question and self-healing — a quiet
+ * week pulls an over-pace month back under.
+ *
+ * The streak is scoped to the current month, so it can never exceed the number
+ * of days elapsed and resets when the budget does.
+ */
+export function budgetStreak(
+  expenses: Expense[],
+  monthlyBudget: number | null,
+  reference: Date = new Date(),
+): BudgetStreak {
+  const range = resolvePeriod("thisMonth", expenses, reference);
+  const monthExpenses = expensesInRange(expenses, range);
+  const spentSoFar = totalSpending(monthExpenses);
+  const daysElapsed = rangeLengthInDays(range);
+
+  if (monthlyBudget === null) {
+    return { days: 0, monthlyBudget, allowedSoFar: 0, spentSoFar, brokenOn: null };
+  }
+
+  const allowancePerDay = monthlyBudget / daysInMonth(reference);
+  const allowedSoFar = allowancePerDay * daysElapsed;
+
+  const spentPerDay = new Map<string, number>();
+  for (const e of monthExpenses) {
+    spentPerDay.set(e.date, (spentPerDay.get(e.date) ?? 0) + e.amount);
+  }
+
+  // Walk the month forwards once to accumulate, recording each day's verdict.
+  const monthStart = parseISO(range.start);
+  const onPace: boolean[] = [];
+  let running = 0;
+  for (let i = 0; i < daysElapsed; i++) {
+    running += spentPerDay.get(toISO(addDays(monthStart, i))) ?? 0;
+    onPace.push(running <= allowancePerDay * (i + 1));
+  }
+
+  let days = 0;
+  for (let i = daysElapsed - 1; i >= 0; i--) {
+    if (!onPace[i]) {
+      return {
+        days,
+        monthlyBudget,
+        allowedSoFar,
+        spentSoFar,
+        brokenOn: toISO(addDays(monthStart, i)),
+      };
+    }
+    days += 1;
+  }
+
+  return { days, monthlyBudget, allowedSoFar, spentSoFar, brokenOn: null };
+}
