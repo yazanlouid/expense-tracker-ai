@@ -1,60 +1,172 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
+
+## What this is
+
+A personal expense tracker: a **fully client-side Next.js 14 App Router app**. No backend,
+database, API routes, auth, or network calls of any kind. Expenses live in `localStorage`; every
+total, chart, and export is computed in the browser. "Export" means serialize an array to a `Blob`
+and click a synthetic `<a download>`; "cloud sync" means `setTimeout`. Charts are recharts.
 
 ## Commands
 
 ```bash
-npm run dev      # start dev server (http://localhost:3000)
+npm run dev      # dev server on http://localhost:3000
 npm run build    # production build
-npm run start    # run the production build
-npm run lint     # next lint (eslint-config-next: core-web-vitals + typescript)
+npm run lint     # next lint (core-web-vitals + typescript)
+npx tsc --noEmit # typecheck; not a package script, but the fastest full check
 ```
 
-There is no test suite configured in this repo (no test runner in `package.json`, no `*.test.*`/`*.spec.*` files) — don't assume one exists.
+**There is no test suite** — no runner, no `*.test.*`/`*.spec.*` files. Don't claim tests pass,
+invent `npm test`, or add a framework as a side effect. `lint` and `tsc` are currently clean, so
+any error you see is yours.
 
-## Architecture
+## Worktrees
 
-This is a **fully client-side Next.js 14 App Router SPA** — there are no API routes (`src/app` contains no `api` directory) and no backend of any kind. Everything is one route (`src/app/page.tsx`, `"use client"`) backed entirely by the browser's `localStorage`. Keep this in mind before assuming any server-side data flow exists.
+Three sibling worktrees of one repo: `expense-tracker-ai/` (`master` — work here by default),
+`expense-tracker-top-categories/`, `expense-tracker-top-vendors/`. They share one object store:
+commits are visible across them, edits are not. `.claude/worktrees/` is gitignored — never commit
+under it. `feature-data-export-v1`/`v2` are unmerged reference branches; `code-analysis.md`
+describes them, not the current tree.
 
-### Data layer
+## How data flows
 
-- `src/lib/types.ts` — the core domain type, `Expense` (`id`, `date` as ISO string, `amount`, `category`, `description`, `createdAt`), plus `ExpenseCategory` and `ExpenseFilters`.
-- `src/lib/storage.ts` — `useExpenses()` is the single source of truth for expense data. On first mount it loads from `localStorage` (key `expense-tracker:expenses`), seeding 10 demo rows if nothing is stored yet; every subsequent state change is written back to `localStorage` in a `useEffect`. Exposes `addExpense`/`updateExpense`/`deleteExpense`/`clearAll`.
-- `src/lib/analytics.ts` — pure functions over `Expense[]`. Two layers: the original aggregates (totals, category breakdowns, monthly trend) consumed by `SummaryCards` and `Charts`, and the period-analysis helpers below them (`resolvePeriod`, `previousRange`, `expensesInRange`, `statsForRange`, `categoryComparison`, `trendSeries`, `pickGranularity`) that drive the analytics dashboard.
-- `src/lib/categories.ts` — `CATEGORY_META`, the single source of truth mapping each `ExpenseCategory` to its display color, badge class, and emoji icon; used by both the charts and `CategoryBadge`.
-- `src/lib/utils.ts` — generic formatting helpers (`formatCurrency`, `formatDate`, `todayISO`, `monthKey`).
+`localStorage` → `useExpenses()` → `page.tsx` → components.
 
-`src/app/page.tsx` owns all top-level UI state (filters, which modal is open, toast) and derives `filteredExpenses` via `useMemo` from `useExpenses()` + the current `ExpenseFilters`. That derived, filtered list — not the raw `expenses` array — is what gets passed down to the list view and to export.
+`page.tsx` owns top-level UI state (filters, open modal, toast) and derives `filteredExpenses` via
+`useMemo`. **Only `ExpenseList` gets the filtered list** — `SummaryCards`, `Charts`,
+`AnalyticsDashboard`, and `ExportCenter` all receive the raw `expenses` array, so filtering the
+table does not narrow what is charted or exported. Deliberate, but surprising: flag it in docs,
+don't "fix" it unasked. `AnalyticsDashboard` also holds its own `PeriodKey` state and ignores
+`ExpenseFilters` entirely.
 
-### Component structure
+## Data layer (`src/lib/`)
 
-`src/components/` holds general dashboard UI: `ExpenseForm`, `ExpenseList`, `FilterBar`, `Charts` (recharts), `SummaryCards`, `CategoryBadge`, `Modal`, `ConfirmDialog`, `Toast`. These are conventional presentational components driven by props from `page.tsx`.
+- `types.ts` — `Expense` (`date` is `YYYY-MM-DD`), `ExpenseInput`, `ExpenseFilters`. Adding a
+  category to `EXPENSE_CATEGORIES` breaks `CATEGORY_META`'s typecheck until you give it metadata —
+  keep that coupling.
+- `storage.ts` — `useExpenses()`: expenses + `isLoaded` + add/update/delete/clearAll.
+- `categories.ts` — `CATEGORY_META`, the single source of truth for every category color, badge
+  class, and icon. Never hardcode a category color at a call site.
+- `cloudExport/storage.ts` — `useExportCenterState()`, an independent store under its own key.
 
-Two sub-features live in their own directories and are documented separately below: `src/components/analytics/` and `src/components/cloud-export/`.
+### Persistence pattern — follow it exactly for any new persisted state
 
-### Analytics dashboard (`src/components/analytics/` + period helpers in `src/lib/analytics.ts`)
+1. `useState` with an empty default; never read `localStorage` during render.
+2. Mount `useEffect` that loads inside `try/catch` around `JSON.parse`, falls back to empty on
+   corrupt data, then sets `isLoaded`.
+3. Second `useEffect`, **gated on `isLoaded`**, re-serializing on every change.
 
-`AnalyticsDashboard.tsx` is rendered in `page.tsx` directly below `Charts` and owns its own period state — it is *not* wired to the page's `ExpenseFilters`. It receives the full `expenses` array and slices it by the selected period itself.
+The gate is load-bearing: without it the initial empty state overwrites stored data on first
+render. Consequences:
 
-- Period keys (`thisMonth`, `lastMonth`, `last3Months`, `last6Months`, `yearToDate`, `allTime`) resolve to a concrete `DateRange` via `resolvePeriod`; every period except `allTime` is compared against the equally-long range immediately preceding it (`previousRange`).
-- Trend granularity is chosen by range length in `pickGranularity`: day (≤31), week (≤120), month beyond that. `trendSeries` emits every bucket including empty ones so the x-axis stays continuous.
-- **Dates are parsed as local midnight** by an internal `parseISO`, not `new Date(iso)` — the latter parses as UTC and shifts expenses into the wrong bucket west of Greenwich. Keep that when adding date logic.
-- `percentChange` returns `null` when the baseline is 0 so the UI can show "No prior data" instead of a misleading +100%. `allTime` has no comparison range at all.
-- **Accessibility note:** `CATEGORY_META`'s colors are not colorblind-safe — Entertainment (`#a855f7`) and Transportation (`#3b82f6`) are near-identical under deuteranopia (ΔE 0.9). `CategoryBreakdown` therefore direct-labels every row with name and amount, so color never carries identity alone. Preserve that if you restyle it. The pre-existing pie chart in `Charts.tsx` does still rely on color to separate slices.
+- **Seeding happens only when the key is absent.** A fresh browser gets 10 demo rows; `clearAll()`
+  writes `[]`, so cleared stays cleared — delete `expense-tracker:expenses` to reseed.
+- **Stored data is trusted after only an `Array.isArray` check** — no per-field validation.
+  Changing the `Expense` shape changes a persisted format with no migration path.
+- **`useExpenses()` is a plain hook, not a context.** `/` and `/insights` each mount their own copy
+  and nothing listens for the `storage` event, so state doesn't sync across routes or tabs; last
+  write wins. Sharing live state means lifting to a provider, not a second hook instance.
 
-### Export Center (`src/components/cloud-export/` + `src/lib/cloudExport/`)
+## Dates — the trap that breaks things quietly
 
-A self-contained sub-feature with its own state, types, and persistence, separate from the main expense data flow:
+Dates are `YYYY-MM-DD` strings and range filtering compares them **lexicographically**
+(`expensesInRange`), which is correct only because the format is zero-padded and fixed-width.
+Don't switch to `Date` objects for filtering.
 
-- `ExportCenter.tsx` is a tabbed modal (Overview / Templates / Destinations / Schedule / Share / History) opened from `ExportCenterTrigger` in the page header.
-- `lib/cloudExport/storage.ts`'s `useExportCenterState()` persists connections/schedules/shares/history to its own `localStorage` key, independent of `useExpenses()`.
-- `lib/cloudExport/templates.ts` (`applyTemplate`) shapes the expense list per report template (tax report, monthly summary, category analysis, full export); `lib/cloudExport/report.ts` builds the actual CSV/PDF `Blob` (via `jspdf`/`jspdf-autotable`).
-- **Important:** only the local CSV/PDF download path (`cards/DownloadCard.tsx`) does real work. Email, Google Sheets, Dropbox, OneDrive, and scheduled/recurring exports are simulated with fake latency (`lib/cloudExport/simulate.ts`) and are explicitly labeled as a demo in the UI — there is no real OAuth, email delivery, or cloud sync behind them. Don't treat those integrations as functional when reasoning about behavior.
+- **Never `new Date(iso)`** — it parses as UTC midnight, the previous day west of Greenwich, and
+  silently shifts expenses into the wrong bucket. Use the local-midnight split
+  (`iso.split("-").map(Number)` → `new Date(y, m - 1, d)`), as `parseISO` in `analytics.ts` and
+  `formatDate` in `utils.ts` do.
+- Back to a string: `toISO` (analytics) or `todayISO()`, which subtract the timezone offset instead
+  of calling `toISOString()` on a local date. `rangeLengthInDays` rounds its ms division because
+  DST makes some spans 23 or 25 hours.
+- Every date-dependent function takes an injectable `reference: Date = new Date()`
+  (`resolvePeriod`, `currentMonthSpending`, `suggestedMonthlyBudget`, `budgetStreak`). Preserve
+  that parameter — it's the only thing making this logic deterministic.
 
-### Conventions
+## `src/lib/analytics.ts` — three layers, all pure
 
-- Path alias `@/*` → `./src/*` (see `tsconfig.json`).
-- Styling is Tailwind utility classes inline in JSX; `src/app/globals.css` is only used for a couple of custom `@keyframes` animations (modal/drawer entrance). No CSS modules.
-- TypeScript `strict` mode is on.
-- All persisted state (both `useExpenses` and `useExportCenterState`) follows the same pattern: load once in a mount `useEffect` with a try/catch around `JSON.parse` (falling back to an empty/default state on corrupt data), then re-serialize to `localStorage` on every state change in a second `useEffect` gated by an `isLoaded` flag.
+No React, no I/O. New aggregation goes here, not inline in a component.
+
+1. **Aggregates** — `totalSpending`, `spendingByCategory`, `topCategory`, `monthlyTrend`; feed
+   `SummaryCards` and `Charts`.
+2. **Period analysis** — `PERIOD_KEYS`/`PERIOD_LABELS`, `resolvePeriod`, `previousRange`,
+   `expensesInRange`, `statsForRange`, `percentChange`, `categoryComparison`, `pickGranularity`,
+   `trendSeries`. Every period but `allTime` compares against the equally-long preceding range;
+   `allTime` has none, so callers must handle `null`. `percentChange` returns `null` on a zero
+   baseline so the UI can say "no prior data" instead of +100% — don't coerce it to 0.
+   `pickGranularity`: day ≤ 31 days, week ≤ 120, month beyond. `trendSeries` emits every bucket
+   including empty ones to keep the x-axis continuous, weeks starting Monday.
+3. **Monthly insights** — `suggestedMonthlyBudget`, `budgetStreak`. There is no budget in the
+   domain model, so the target derives from the user's own history: last calendar month's total →
+   lifetime daily average scaled to a month → `null` (rendered as an empty state; never invent a
+   number). It uses a *closed* month so today's spending can't move its own goalposts, and the
+   streak paces the **cumulative** month-to-date total against a pro-rated allowance, not per-day
+   spend — the comments explaining why should survive refactors.
+
+## Routes and components
+
+- `/` (`src/app/page.tsx`) — dashboard: cards, charts, analytics, filter bar, list, modals, toast.
+- `/insights` (`src/app/insights/page.tsx`) — `MonthlyInsights`: this month's donut by category,
+  top-3 breakdown, budget streak.
+
+Both are `"use client"` and render the same spinner while `!isLoaded` — keep it; it prevents a
+hydration mismatch and a flash of "no expenses". `layout.tsx` is the only server component.
+
+Validation lives only in `ExpenseForm.validate` (amount > 0 and ≤ 1,000,000; description 2–200
+chars; date required, capped at today) — `addExpense`/`updateExpense` accept anything, so new write
+paths must validate themselves. `Modal` hardcodes `aria-labelledby="modal-title"`, so only one may
+be open at a time.
+
+## Export Center — what's real and what isn't
+
+`src/components/cloud-export/` + `src/lib/cloudExport/`: a tabbed modal with its own state and key.
+
+**Only the CSV/PDF download does real work** (`cards/DownloadCard.tsx` → `applyTemplate` →
+`buildReportBlob` → `downloadBlob` → `addHistoryEntry`). Everything else is a UI-labeled
+simulation: email/Sheets/Dropbox/OneDrive use fake latency from `simulate.ts`; schedules are stored
+and described but **nothing executes them** (no timer, worker, or server); share links are a
+`randomToken()` plus a QR code of a URL that resolves to nothing; history caps at 30 entries. Never
+describe these as working — making one real requires a backend.
+
+## Conventions
+
+- Path alias `@/*` → `./src/*`. TypeScript `strict`.
+- Domain unions come from `as const` tuples (`EXPENSE_CATEGORIES`, `PERIOD_KEYS`,
+  `DESTINATION_IDS`, `TEMPLATE_IDS`) with `(typeof X)[number]` — don't hand-write string unions.
+- One default-exported component per file; `"use client"` on every component and hook module.
+- Tailwind utilities inline in JSX. No CSS modules, no component library, light theme only;
+  `globals.css` holds only the directives, two CSS variables, and the Export Center keyframes.
+- Icons are emoji glyphs or hand-inlined 20×20 SVG paths — there's no icon package, don't add one.
+- Money is a plain `number`, rounded to 2dp on submit, formatted via `formatCurrency` (Intl,
+  hardcoded en-US/USD); dates via `formatDate`. Sums are naive float `reduce` — don't depend on
+  exact cents.
+- Every list, chart, and card has an explicit empty state. New ones need one too.
+
+## Accessibility that's load-bearing
+
+`CATEGORY_META`'s palette is **not colorblind-safe** — Entertainment (`#a855f7`) and
+Transportation (`#3b82f6`) are near-identical under deuteranopia. Two components compensate and
+must keep doing so: `analytics/CategoryBreakdown` direct-labels every row, and `MonthlyInsights`
+gives the donut an `aria-label` naming every slice and amount. `Charts.tsx`'s pie is the known gap
+— don't add more color-only encoding.
+
+## Working agreements
+
+- New screen → `src/app/<route>/page.tsx`, `"use client"`, `useExpenses()`, spinner while
+  `!isLoaded`.
+- New aggregation → a pure function in `analytics.ts` taking `Expense[]` (plus `reference: Date` if
+  it touches dates), not computed in the component body.
+- Reuse `resolvePeriod`/`expensesInRange`/`PERIOD_LABELS` and `analytics/PeriodSelector` instead of
+  new date math.
+- New persisted state → its own `expense-tracker:*` key and the three-step pattern above.
+- Guard every divisor (`total > 0 ? part / total : 0`); an unguarded share renders as `NaN%`.
+- Finish with `npm run lint` and `npx tsc --noEmit`.
+
+Don't, without asking: add API routes or any server-side path; introduce a state/UI/icon library;
+add dark mode; reformat untouched files; delete the `feature-data-export-*` branches.
+
+`docs/dev/` and `docs/user/` are written by the `/document-feature` command — read it before
+documenting anything and match the existing files.
