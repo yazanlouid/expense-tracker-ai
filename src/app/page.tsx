@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import AnalyticsDashboard from "@/components/analytics/AnalyticsDashboard";
 import Charts from "@/components/Charts";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ExpenseForm from "@/components/ExpenseForm";
@@ -119,6 +120,7 @@ export default function Home() {
           <>
             <SummaryCards expenses={expenses} />
             <Charts expenses={expenses} />
+            <AnalyticsDashboard expenses={expenses} />
 
             <FilterBar
               filters={filters}
