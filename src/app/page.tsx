@@ -5,7 +5,8 @@ import Charts from "@/components/Charts";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ExpenseForm from "@/components/ExpenseForm";
 import ExpenseList from "@/components/ExpenseList";
-import ExportButton from "@/components/ExportButton";
+import ExportCenter from "@/components/cloud-export/ExportCenter";
+import ExportCenterTrigger from "@/components/cloud-export/ExportCenterTrigger";
 import FilterBar from "@/components/FilterBar";
 import Modal from "@/components/Modal";
 import SummaryCards from "@/components/SummaryCards";
@@ -27,6 +28,7 @@ export default function Home() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
   const [isClearOpen, setIsClearOpen] = useState(false);
+  const [isExportCenterOpen, setIsExportCenterOpen] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
   function notify(message: string, type: ToastState["type"] = "success") {
@@ -96,7 +98,7 @@ export default function Home() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <ExportButton expenses={filteredExpenses} />
+            <ExportCenterTrigger onClick={() => setIsExportCenterOpen(true)} disabled={expenses.length === 0} />
             <button
               onClick={openAddForm}
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700"
@@ -167,6 +169,12 @@ export default function Home() {
         confirmLabel="Clear All"
         onConfirm={confirmClearAll}
         onCancel={() => setIsClearOpen(false)}
+      />
+
+      <ExportCenter
+        isOpen={isExportCenterOpen}
+        onClose={() => setIsExportCenterOpen(false)}
+        expenses={expenses}
       />
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
