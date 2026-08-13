@@ -1,0 +1,283 @@
+TOP VENDORS FEATURE — WORK SUMMARY
+Branch: feature/top-vendors
+Worktree: C:\Users\yazan\OneDrive\Desktop\parent-directory\expense-tracker-top-vendors
+Commit: a1109e5 "Add Top Vendors page with description-derived vendor grouping"
+Date: 2026-08-13
+
+====================================================================
+1. WHAT WAS IMPLEMENTED
+====================================================================
+
+A new client-side route at /top-vendors that ranks inferred vendors by
+total spend, plus the pure aggregation module behind it.
+
+Page behaviour (src/app/top-vendors/page.tsx, "use client"):
+  - Reads data through useExpenses() (same localStorage source of truth
+    as the dashboard). Shows the same spinner as page.tsx until
+    isLoaded, which also avoids a hydration mismatch.
+  - Period filter: This month / Last 3 months / Year to date / All time.
+    Rendered as the same slate pill-group used by the analytics
+    PeriodSelector, labelled from the shared PERIOD_LABELS map.
+    Date slicing is delegated entirely to resolvePeriod() and
+    expensesInRange() from src/lib/analytics.ts — no new date math was
+    written, so the local-midnight parseISO convention is preserved.
+  - "Show top N" control: Top 5 / Top 10 / Top 25 / All (default 10),
+    a plain <select>. A footer line reads "Showing X of Y vendors."
+    when the list is truncated.
+  - Ranked rows, descending by total spend, each showing: rank number,
+    vendor name, total (formatCurrency), transaction count, average per
+    transaction, percentage of the period's overall spend (1 decimal),
+    most common category via the existing <CategoryBadge>, the date of
+    the vendor's most recent expense, and a proportional bar coloured
+    from CATEGORY_META[topCategory].color.
+    The bar is scaled against the largest vendor's total (not the grand
+    total) so the list stays readable when spend is spread thin; the
+    scale is guarded against a 0 maximum.
+  - A context line above the list: resolved date range, period total,
+    transaction count, vendor count — plus an explicit note in the UI
+    that "Vendors are inferred from each expense's description — there
+    is no vendor field."
+  - Empty state card ("No expenses in this period") when the period
+    contains nothing.
+  - "Back to dashboard" link in the page header (next/link).
+  - Styling matches the existing app: Tailwind utilities, slate palette,
+    `rounded-xl border border-slate-200 bg-white ... shadow-sm` cards.
+
+Zero/edge handling:
+  - Grand total of 0 (e.g. all amounts are 0) => every share is exactly
+    0, never NaN — the division is guarded in aggregateVendors.
+  - Empty expense list => empty vendor list, total 0, empty state.
+  - Blank/whitespace-only descriptions never crash; they bucket into a
+    single "(No description)" row.
+
+====================================================================
+2. THE VENDOR-DERIVATION RULE  (READ THIS)
+====================================================================
+
+*** VENDOR IS INFERRED FROM `description`. IT IS NOT A REAL FIELD. ***
+
+The Expense interface in src/lib/types.ts was NOT modified — no field
+was added, nothing about useExpenses, the seeded demo rows, or
+ExpenseForm changed. Vendors are computed at read time from the
+free-text `description`, so they are a best-effort grouping, not
+authoritative data. The rule is documented in a header comment at the
+top of src/lib/vendors.ts.
+
+The rule (deliberately dumb and predictable over clever/fuzzy):
+  1. Trim, and collapse runs of whitespace to single spaces.
+  2. A blank/whitespace-only description goes to one explicit
+     "(No description)" bucket, under its own sentinel key.
+  3. Cut trailing detail at the FIRST separator found: a SPACED dash
+     (" - ", " - " en dash, " - " em dash), a spaced pipe or slash, or
+     any bare , : ; (
+       "Groceries - weekly shop"  -> "Groceries"
+       "Amazon, household stuff"  -> "Amazon"
+       "Netflix: monthly plan"    -> "Netflix"
+       "Costco (bulk)"            -> "Costco"
+     A separator at index 0 is ignored (the whole string is kept).
+     An UNSPACED hyphen is never a separator, so "Gas fill-up" and
+     "7-Eleven" survive intact.
+  4. Drop leading filler words from a small FIXED list, while at least
+     one word remains. List: a, an, the, at, bought, for, from, my,
+     order, ordered, paid, pay, payment, purchase, purchased, to.
+       "Paid Comcast"        -> "Comcast"
+       "Payment to Comcast"  -> "Comcast"
+       "The Home Depot"      -> "Home Depot"
+  5. Strip leading/trailing punctuation and quotes. Internal
+     punctuation is preserved, so "Trader Joe's" and "AT&T" are intact.
+  6. If any step would leave an empty string, fall back to the
+     whitespace-collapsed original rather than losing the row
+     (so "..." stays "...", it does not become "(No description)").
+
+Grouping key = the lowercased result, so "STARBUCKS" / "Starbucks" /
+"starbucks " / "Starbucks." are one vendor. The DISPLAY name is the
+most frequent cleaned spelling within the group; ties are broken by
+first appearance in the input array (deterministic and tested).
+
+Known limitations (be honest about these with users):
+  - No fuzzy/typo matching: "Wallmart" and "Walmart" stay separate.
+  - No knowledge of real merchant names; it is pure string surgery.
+  - A description that leads with the activity rather than the merchant
+    groups under the activity: "Coffee at Blue Bottle" -> "Coffee",
+    "Uber to airport" -> "Uber to airport" (so "Uber to office" is a
+    DIFFERENT vendor). " to " / " for " were deliberately NOT treated
+    as separators, because that would break the more valuable
+    "Payment to Comcast" -> "Comcast" case. Predictability was chosen
+    over cleverness.
+  - The seeded demo data has largely unique descriptions, so most demo
+    vendors are single-transaction rows. That is expected.
+
+Tie-breaks, all deterministic and covered by tests:
+  - Ranking: total DESC, then transaction count DESC, then name ASC.
+  - Most common category: transaction count DESC, then spend in that
+    category DESC, then the canonical EXPENSE_CATEGORIES order.
+
+====================================================================
+3. FILES CREATED
+====================================================================
+
+  src/lib/vendors.ts                  (276 lines, new — all pure logic)
+      Exports: NO_DESCRIPTION_KEY, NO_DESCRIPTION_LABEL,
+      VENDOR_PERIOD_KEYS, VendorLimit, VendorStat, VendorReport,
+      vendorNameFromDescription(), vendorKeyFromDescription(),
+      aggregateVendors(), limitVendors(), vendorReport().
+      Imports (read-only) resolvePeriod/expensesInRange/DateRange/
+      PeriodKey from ./analytics and the types from ./types.
+
+  src/app/top-vendors/page.tsx        (185 lines, new — the route)
+
+  src/lib/__tests__/vendors.test.ts   (322 lines, new — 32 tests)
+
+FILES MODIFIED
+====================================================================
+
+  src/app/page.tsx        +2 lines ONLY (kept intentionally tiny):
+      - line 3:   import Link from "next/link";
+      - line 103: a single-line <Link href="/top-vendors">Top Vendors</Link>
+                  inserted immediately BEFORE <ExportCenterTrigger .../>
+                  inside the header's <div className="flex items-center gap-2">
+      No other line of page.tsx was touched.
+
+  package.json            +2 lines:
+      - "test": "vitest run" added to "scripts" (after "lint")
+      - "vitest": "^4.1.10" added to "devDependencies" (after typescript)
+
+  package-lock.json       regenerated by npm install -D vitest.
+
+NOT modified: src/lib/types.ts, src/lib/analytics.ts, src/lib/storage.ts,
+src/lib/categories.ts, src/lib/utils.ts, tsconfig.json, .eslintrc.json,
+CLAUDE.md, any existing component. No vitest.config.ts was added (see
+below) and no next.config/tailwind changes.
+
+====================================================================
+4. DEPENDENCIES ADDED
+====================================================================
+
+  vitest ^4.1.10 (devDependency) — installed with `npm install -D vitest`
+  exactly as specified. Nothing else: no @vitest/ui, no jsdom, no React
+  testing libraries. Tests cover PURE FUNCTIONS ONLY, no components.
+
+====================================================================
+5. TESTING APPROACH AND ACTUAL VERIFICATION RESULTS
+====================================================================
+
+Approach: all aggregation/normalization lives in src/lib/vendors.ts,
+completely separate from the React component, so it is testable with a
+plain node environment and no DOM. The test file uses RELATIVE imports
+("../vendors", "../types") rather than the "@/..." alias — this is
+deliberate: it means NO vitest.config.ts is needed for alias
+resolution, which keeps one more shared file out of the merge path.
+Period boundaries are tested by passing a fixed `reference` Date
+(new Date(2026, 7, 13), local midnight) into vendorReport(), so the
+suite is not clock-dependent.
+
+Coverage (32 tests, 8 describe blocks):
+  - normalization: whitespace collapse/trim, edge punctuation stripping
+    with internal punctuation preserved, separator cutting, unspaced
+    hyphens kept, leading-filler dropping, filler-only input, blank
+    input, punctuation-only fallback
+  - keys: case-insensitivity; blank key distinct from a literal
+    "(No description)" description
+  - grouping: case/whitespace/punctuation variants collapse to one
+    vendor; display-name choice by frequency; display-name tie broken
+    by first appearance (asserted in both input orders); all blank
+    descriptions in one bucket
+  - ranking: totals descending; total tie broken by count then name
+  - math: average per transaction; share per vendor; shares sum to 1
+  - zero cases: empty expense list; all-zero amounts => share 0, no NaN
+  - most-common category: by count; count tie by spend; count+spend tie
+    by canonical order, asserted order-independently
+  - limitVendors: first N, "all", N greater than length, 0, empty list
+  - period filtering: thisMonth range is exactly 2026-08-01..2026-08-13,
+    with the start date AND end date INCLUSIVE, the day before the
+    start and the day after the end both excluded; last3Months widens
+    to 2026-06-01; allTime spans min..max including a future-dated row;
+    empty period; empty list; shares are relative to the filtered
+    period, not the whole list
+
+ACTUAL RESULTS (run in the worktree on the committed tree):
+
+  npx tsc --noEmit   -> PASS (exit 0, no output)
+  npm run lint       -> PASS ("✔ No ESLint warnings or errors")
+  npm test           -> PASS (Test Files 1 passed (1);
+                              Tests 32 passed (32))
+
+All three pass. Nothing is skipped, nothing is failing.
+`npm run dev` / `build` / `start` were NOT run, per instructions.
+
+Two issues were found and fixed during verification, both worth noting:
+  (a) tsc initially failed with TS2802 on two `for..of` loops over a
+      Map: this repo's tsconfig.json has NO "target", so it compiles as
+      ES5 and Map iteration is an error. Fixed INSIDE vendors.ts with
+      Array.from(map.entries()) (the same pattern analytics.ts already
+      uses) rather than editing the shared tsconfig.json — that keeps
+      tsconfig.json out of the merge path entirely.
+  (b) A stray NUL byte had ended up inside the blank-description
+      sentinel string literal, which made git treat vendors.ts as a
+      binary blob. It is now the readable literal "(no description)"
+      (still provably non-colliding with any cleaned description), the
+      file is valid UTF-8 text, and the branch history was squashed to
+      a single commit so no binary blob remains in it.
+
+====================================================================
+6. INTEGRATION NOTES — MERGE CONFLICT RISK WITH feature/top-categories
+====================================================================
+
+Only THREE shared files were touched. Everything else is new files that
+the sibling branch cannot collide with (src/lib/vendors.ts,
+src/app/top-vendors/page.tsx, src/lib/__tests__/vendors.test.ts).
+
+  HIGH RISK — package.json
+    Both branches add a "test" script and vitest to devDependencies, on
+    the exact same lines. Expect a conflict in BOTH the "scripts" block
+    (the line after "lint": "next lint") and "devDependencies" (the
+    line after "typescript": "^5"). Resolution is trivial: keep ONE
+    copy of `"test": "vitest run"` and ONE `"vitest": "^..."`. If the
+    two branches resolved different vitest versions, keep the higher
+    one; this branch has ^4.1.10.
+
+  HIGH RISK — package-lock.json
+    Both branches ran `npm install -D vitest`, so the lockfile diverged.
+    Do not hand-merge it. Resolve by taking either side, then running
+    `npm install` once on the merged package.json to regenerate.
+
+  MEDIUM RISK — src/app/page.tsx
+    Two conflict hunks are likely, both tiny:
+      1. The import block: this branch adds `import Link from "next/link";`
+         as the line directly after `"use client";` and before
+         `import { useMemo, useState } from "react";`. If the sibling
+         also imports next/link there, keep a SINGLE Link import.
+      2. The header button row, inside
+         <div className="flex items-center gap-2"> (~line 101-103):
+         this branch inserts one <Link href="/top-vendors">Top Vendors</Link>
+         immediately before <ExportCenterTrigger ... />. If the sibling
+         inserts its own link in the same spot, keep BOTH links side by
+         side — they are independent siblings in the same flex row and
+         will lay out fine next to each other and next to
+         ExportCenterTrigger / the Add Expense button. On small screens
+         the header already wraps (flex-col sm:flex-row), so two extra
+         links are safe.
+    Nothing else in page.tsx was changed, so any other conflict in that
+    file is not from this branch.
+
+  ZERO RISK — src/lib/analytics.ts
+    Not modified. This branch only IMPORTS from it (resolvePeriod,
+    expensesInRange, DateRange, PeriodKey, PERIOD_LABELS). If the
+    sibling branch changes analytics.ts, the only compatibility
+    requirement is that those five exports keep their current names and
+    signatures. In particular vendorReport() relies on
+    resolvePeriod(period, expenses, reference) keeping its optional
+    third `reference: Date` argument — the tests pin a fixed date
+    through it, so if that parameter is removed the vendors tests will
+    fail loudly rather than silently drift.
+
+  ZERO RISK — src/lib/types.ts
+    Not modified. The Expense shape is untouched, as required.
+
+  Note for whoever merges: no vitest.config.ts exists on this branch
+  (tests use relative imports precisely to avoid needing one). If the
+  sibling branch DOES add a vitest.config.ts, it will merge in cleanly
+  as a new file and this branch's tests will keep working under it, as
+  long as its `include`/`environment` settings still pick up
+  src/lib/__tests__/*.test.ts and do not force a DOM environment
+  requirement (jsdom) that is not installed.
