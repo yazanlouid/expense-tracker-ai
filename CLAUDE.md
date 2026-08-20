@@ -15,12 +15,18 @@ and click a synthetic `<a download>`; "cloud sync" means `setTimeout`. Charts ar
 npm run dev      # dev server on http://localhost:3000
 npm run build    # production build
 npm run lint     # next lint (core-web-vitals + typescript)
+npm test         # vitest run
 npx tsc --noEmit # typecheck; not a package script, but the fastest full check
 ```
 
-**There is no test suite** — no runner, no `*.test.*`/`*.spec.*` files. Don't claim tests pass,
-invent `npm test`, or add a framework as a side effect. `lint` and `tsc` are currently clean, so
-any error you see is yours.
+The only test suite is `src/lib/analytics.test.ts` (Vitest). It runs under a **fixed
+`TZ=Europe/London`**, set in `vitest.config.mts` and enforced by `vitest.setup.ts`, which throws if
+the resolved offsets aren't GMT in January and BST in July — this module's defects are invisible
+under UTC. Two rules when extending it: never call zero-arg `new Date()` in a test, and pass every
+`reference: Date` explicitly, or the suite starts changing its answer tomorrow. Derive expected
+values from the docs and a calendar rather than from what the code currently returns.
+
+`test`, `lint` and `tsc` are all currently clean, so any error you see is yours.
 
 ## Worktrees
 
@@ -79,12 +85,15 @@ Don't switch to `Date` objects for filtering.
   silently shifts expenses into the wrong bucket. Use the local-midnight split
   (`iso.split("-").map(Number)` → `new Date(y, m - 1, d)`), as `parseISO` in `analytics.ts` and
   `formatDate` in `utils.ts` do.
-- Back to a string: `toISO` (analytics) or `todayISO()`, which subtract the timezone offset instead
-  of calling `toISOString()` on a local date. `rangeLengthInDays` rounds its ms division because
-  DST makes some spans 23 or 25 hours.
+- Back to a string: `toISO` (analytics) or `toISODate`/`todayISO()` (utils), which take the local
+  calendar fields instead of calling `toISOString()` on a local date. **Never derive a day or a
+  month key from `toISOString()`** — between midnight and 01:00 BST it reports yesterday, which
+  files an expense under the wrong day and, on the 1st, the wrong month. `rangeLengthInDays` rounds
+  its ms division because DST makes some spans 23 or 25 hours, and floors at 0.
 - Every date-dependent function takes an injectable `reference: Date = new Date()`
-  (`resolvePeriod`, `currentMonthSpending`, `suggestedMonthlyBudget`, `budgetStreak`). Preserve
-  that parameter — it's the only thing making this logic deterministic.
+  (`resolvePeriod`, `currentMonthSpending`, `monthlyTrend`, `suggestedMonthlyBudget`,
+  `budgetStreak`). Preserve that parameter — it's the only thing making this logic deterministic,
+  and the test suite drives all of them through it.
 
 ## `src/lib/analytics.ts` — three layers, all pure
 
@@ -94,11 +103,18 @@ No React, no I/O. New aggregation goes here, not inline in a component.
    `SummaryCards` and `Charts`.
 2. **Period analysis** — `PERIOD_KEYS`/`PERIOD_LABELS`, `resolvePeriod`, `previousRange`,
    `expensesInRange`, `statsForRange`, `percentChange`, `categoryComparison`, `pickGranularity`,
-   `trendSeries`. Every period but `allTime` compares against the equally-long preceding range;
-   `allTime` has none, so callers must handle `null`. `percentChange` returns `null` on a zero
-   baseline so the UI can say "no prior data" instead of +100% — don't coerce it to 0.
-   `pickGranularity`: day ≤ 31 days, week ≤ 120, month beyond. `trendSeries` emits every bucket
-   including empty ones to keep the x-axis continuous, weeks starting Monday.
+   `trendSeries`. `allTime` has no preceding range, so callers must handle `null`.
+   `previousRange` is **month-aligned**: a range starting on the 1st steps back whole months and
+   keeps its day-of-month footprint (February vs all of January; 1–19 Aug vs 1–19 Jul), so the two
+   ranges are deliberately *not* always equal-length — recurring charges land on the 1st and a
+   sliding window drops them from the baseline. Anything else gets the equally-long preceding
+   window. `statsForRange` and `trendSeries` both filter by their `range` argument, so passing the
+   full list is always safe — keep those two consistent. `categoryComparison` covers categories in
+   *either* period, so a category that dropped to zero still appears (`CategoryBreakdown` treats an
+   all-zero result as its empty state). `percentChange` returns `null` on a zero baseline so the UI
+   can say "no prior data" instead of +100% — don't coerce it to 0. `pickGranularity`: day ≤ 31
+   days, week ≤ 120, month beyond. `trendSeries` emits every bucket including empty ones to keep
+   the x-axis continuous, weeks starting Monday.
 3. **Monthly insights** — `suggestedMonthlyBudget`, `budgetStreak`. There is no budget in the
    domain model, so the target derives from the user's own history: last calendar month's total →
    lifetime daily average scaled to a month → `null` (rendered as an empty state; never invent a
@@ -163,7 +179,7 @@ gives the donut an `aria-label` naming every slice and amount. `Charts.tsx`'s pi
   new date math.
 - New persisted state → its own `expense-tracker:*` key and the three-step pattern above.
 - Guard every divisor (`total > 0 ? part / total : 0`); an unguarded share renders as `NaN%`.
-- Finish with `npm run lint` and `npx tsc --noEmit`.
+- Finish with `npm test`, `npm run lint` and `npx tsc --noEmit`.
 
 Don't, without asking: add API routes or any server-side path; introduce a state/UI/icon library;
 add dark mode; reformat untouched files; delete the `feature-data-export-*` branches.

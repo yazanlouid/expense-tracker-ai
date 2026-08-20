@@ -8,7 +8,7 @@ A personal expense tracker built with Next.js 14 — add and categorise expenses
 
 **Expense management** — add, edit and delete expenses across six categories (Food, Transportation, Entertainment, Shopping, Bills, Other), with search and date-range filtering. On first run the app seeds ten demo expenses so there's something to look at.
 
-**Analytics dashboard** — pick a period (this month, last month, 3/6 months, year to date, all time) and see totals, average per day, and average transaction, each compared against the equivalent preceding period. Includes a spending trend chart whose granularity adapts to the range (daily → weekly → monthly) and a ranked category breakdown with per-category change.
+**Analytics dashboard** — pick a period (this month, last month, 3/6 months, year to date, all time) and see totals, average per day, and average transaction, each compared against the preceding period. Comparisons are month-aligned: February is measured against the whole of January, and a month-to-date range against the same days of the previous month, so recurring charges that land on the 1st sit on both sides of the comparison. Includes a spending trend chart whose granularity adapts to the range (daily → weekly → monthly) and a ranked category breakdown with per-category change, covering categories from either period so a category you stopped spending on still shows up.
 
 **Export Center** — a tabbed modal for report templates (tax report, monthly summary, category analysis, full export), destinations, scheduling, and share links.
 
@@ -25,12 +25,20 @@ npm run dev      # http://localhost:3000
 Other scripts:
 
 ```bash
-npm run build    # production build
-npm run start    # serve the production build
-npm run lint     # next lint
+npm run build      # production build
+npm run start      # serve the production build
+npm run lint       # next lint
+npm test           # vitest run
+npm run test:watch # vitest in watch mode
 ```
 
-There is **no test suite** in this repo — no runner, no `*.test.*` files. `lint` and `build` are the only automated checks.
+## Tests
+
+`src/lib/analytics.test.ts` covers the date and period logic in `src/lib/analytics.ts` — period resolution, range arithmetic, comparison baselines, chart bucketing, and the DST transitions.
+
+The suite runs under a fixed **`TZ=Europe/London`**, set in `vitest.config.mts` and enforced by `vitest.setup.ts`, which fails the run outright if the resolved offsets aren't GMT in January and BST in July. This module mixes local-calendar arithmetic with UTC-derived strings, and several of the bugs these tests were written to catch are invisible under UTC — a suite that only passes in one timezone would be worse than none.
+
+Two rules when adding to it: never call zero-arg `new Date()` in a test, and pass every `reference: Date` explicitly, or the suite will start changing its answer tomorrow.
 
 ## Tech stack
 
@@ -48,6 +56,7 @@ src/
     types.ts                Expense domain type
     storage.ts              useExpenses() — localStorage persistence
     analytics.ts            aggregates + period analysis (pure functions)
+    analytics.test.ts       vitest suite, fixed to TZ=Europe/London
     categories.ts           CATEGORY_META — colours, icons, badges
     cloudExport/            templates, report building, simulation
 ```
@@ -57,7 +66,8 @@ src/
 ## Known issues
 
 - **Chart colours are not colourblind-safe.** In `CATEGORY_META`, Entertainment (`#a855f7`) and Transportation (`#3b82f6`) are near-indistinguishable under deuteranopia. The analytics category breakdown works around this by labelling every row, but the pie chart in `Charts.tsx` still separates those slices by colour alone.
-- **No automated tests** cover the date/period logic in `analytics.ts`.
+- **`analytics.ts` is the only tested module.** Storage, the Export Center, and every component are still uncovered.
+- **The trend chart clips a longer baseline.** Comparison ranges are month-aligned and so may be longer than the selected period (31-day January against a 28-day February); the x-axis belongs to the selected period, so the dashed baseline line stops early. The summary cards carry the full totals.
 
 ## Branches
 
