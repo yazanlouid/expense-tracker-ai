@@ -9,7 +9,10 @@ interface CategoryBreakdownProps {
 }
 
 export default function CategoryBreakdown({ categories, comparisonLabel }: CategoryBreakdownProps) {
-  if (categories.length === 0) {
+  // `categoryComparison` also reports categories that were spent on last period
+  // and not this one, so "nothing this period" is an all-zero list, not an
+  // empty one.
+  if (categories.every((entry) => entry.total === 0)) {
     return (
       <div className="flex h-32 items-center justify-center text-sm text-slate-400">
         No spending in this period

@@ -8,7 +8,7 @@ export interface CategoryTotal {
 
 export interface MonthlyTotal {
   month: string; // YYYY-MM
-  label: string; // e.g. "Mar 2026"
+  label: string; // e.g. "Mar 26"
   total: number;
 }
 
@@ -17,7 +17,10 @@ export function totalSpending(expenses: Expense[]): number {
 }
 
 export function currentMonthSpending(expenses: Expense[], reference: Date = new Date()): number {
-  const key = monthKey(reference.toISOString().slice(0, 10));
+  // `toISO`, not `toISOString()` — the latter reports the UTC day, which is the
+  // previous one between midnight and 01:00 BST and so bills the 1st of the
+  // month to the month before.
+  const key = monthKey(toISO(reference));
   return expenses.filter((e) => monthKey(e.date) === key).reduce((sum, e) => sum + e.amount, 0);
 }
 
@@ -36,8 +39,12 @@ export function topCategory(expenses: Expense[]): CategoryTotal | null {
   return totals.length > 0 ? totals[0] : null;
 }
 
-export function monthlyTrend(expenses: Expense[], monthsBack = 6): MonthlyTotal[] {
-  const now = new Date();
+export function monthlyTrend(
+  expenses: Expense[],
+  monthsBack = 6,
+  reference: Date = new Date(),
+): MonthlyTotal[] {
+  const now = reference;
   const months: MonthlyTotal[] = [];
 
   for (let i = monthsBack - 1; i >= 0; i--) {
@@ -137,10 +144,14 @@ function addDays(date: Date, days: number): Date {
   return next;
 }
 
-/** Inclusive day count. Rounded because DST makes some spans 23h or 25h. */
+/**
+ * Inclusive day count. Rounded because DST makes some spans 23h or 25h, and
+ * floored at 0 because a day count is a size — an inverted range is empty, not
+ * negative.
+ */
 export function rangeLengthInDays(range: DateRange): number {
   const ms = parseISO(range.end).getTime() - parseISO(range.start).getTime();
-  return Math.round(ms / 86_400_000) + 1;
+  return Math.max(0, Math.round(ms / 86_400_000) + 1);
 }
 
 export function resolvePeriod(
@@ -179,28 +190,83 @@ export function resolvePeriod(
   }
 }
 
-/** The equally-long range ending the day before `range` starts. */
+/**
+ * The comparable range immediately before `range`.
+ *
+ * A range starting on the 1st of a month is month-aligned — every period in
+ * `PERIOD_KEYS` except `allTime` produces one — so it steps back by whole
+ * months and keeps the same day-of-month footprint: February compares against
+ * the whole of January, and 1–19 August against 1–19 July.
+ *
+ * That alignment is the point, not a nicety. Rent, subscriptions and standing
+ * orders land at the start of a month, so an equally-long window ending the day
+ * before (4–31 January for February) drops them from the baseline while the
+ * current period still counts them. The bias runs one way every time and is
+ * large enough to flip the sign of the reported change.
+ *
+ * The two ranges are therefore NOT always the same length — comparing a 28-day
+ * February against a 31-day January is the correct month-over-month question.
+ * `statsForRange` divides each range by its own length, so `averagePerDay`
+ * stays like-for-like.
+ *
+ * Anything else — an arbitrary window, or an inverted one — falls back to the
+ * equally-long range ending the day before.
+ */
 export function previousRange(range: DateRange): DateRange {
-  const days = rangeLengthInDays(range);
-  const end = addDays(parseISO(range.start), -1);
-  const start = addDays(end, -(days - 1));
-  return { start: toISO(start), end: toISO(end) };
+  const start = parseISO(range.start);
+  const end = parseISO(range.end);
+
+  if (start.getDate() === 1 && range.start <= range.end) {
+    const monthsSpanned =
+      (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
+    const previousStart = new Date(start.getFullYear(), start.getMonth() - monthsSpanned, 1);
+    const previousEndMonth = new Date(end.getFullYear(), end.getMonth() - monthsSpanned, 1);
+    // Ending on the last day of a month means the range IS whole months, so the
+    // baseline is whole months too, however long they happen to be. Otherwise
+    // hold the day of the month, clamped where the target is shorter
+    // (30 March compares against 28 February).
+    const previousEndDay =
+      end.getDate() === daysInMonth(end)
+        ? daysInMonth(previousEndMonth)
+        : Math.min(end.getDate(), daysInMonth(previousEndMonth));
+
+    return {
+      start: toISO(previousStart),
+      end: toISO(
+        new Date(previousEndMonth.getFullYear(), previousEndMonth.getMonth(), previousEndDay),
+      ),
+    };
+  }
+
+  // Clamped at 1 so an inverted range cannot produce a range that runs backwards.
+  const days = Math.max(1, rangeLengthInDays(range));
+  const previousEnd = addDays(start, -1);
+  return { start: toISO(addDays(previousEnd, -(days - 1))), end: toISO(previousEnd) };
 }
 
 export function expensesInRange(expenses: Expense[], range: DateRange): Expense[] {
   return expenses.filter((e) => e.date >= range.start && e.date <= range.end);
 }
 
+/**
+ * Summary statistics for `range`.
+ *
+ * Filters `expenses` to `range` itself rather than trusting the caller to have
+ * done it — passing the full list and passing a pre-filtered one now give the
+ * same answer, so the pairing can't silently divide an out-of-range total by an
+ * in-range day count.
+ */
 export function statsForRange(expenses: Expense[], range: DateRange): PeriodStats {
-  const total = totalSpending(expenses);
-  const count = expenses.length;
+  const inRange = expensesInRange(expenses, range);
+  const total = totalSpending(inRange);
+  const count = inRange.length;
   const days = Math.max(1, rangeLengthInDays(range));
   return {
     total,
     count,
     averagePerDay: total / days,
     averageTransaction: count > 0 ? total / count : 0,
-    top: topCategory(expenses),
+    top: topCategory(inRange),
   };
 }
 
@@ -214,26 +280,47 @@ export function percentChange(current: number, previous: number): number | null 
   return (current - previous) / previous;
 }
 
+/**
+ * Category-by-category comparison of two periods, largest current spend first.
+ *
+ * Covers every category present in *either* period. A category that was spent
+ * on before and not this time comes back with `total: 0` and a -100% change:
+ * dropping it would hide the largest movement the comparison has to report.
+ */
 export function categoryComparison(
   current: Expense[],
   previous: Expense[],
 ): CategoryComparison[] {
-  const currentTotals = spendingByCategory(current);
+  const currentByCategory = new Map(
+    spendingByCategory(current).map((c) => [c.category, c.total]),
+  );
   const previousByCategory = new Map(
     spendingByCategory(previous).map((c) => [c.category, c.total]),
   );
   const grandTotal = totalSpending(current);
 
-  return currentTotals.map(({ category, total }) => {
-    const previousTotal = previousByCategory.get(category) ?? 0;
-    return {
-      category,
-      total,
-      previousTotal,
-      share: grandTotal > 0 ? total / grandTotal : 0,
-      change: percentChange(total, previousTotal),
-    };
-  });
+  // Current categories keep their descending order; anything only the previous
+  // period used is appended, and the stable sort below leaves those zero totals
+  // at the end in order of what they used to cost.
+  const currentCategories = Array.from(currentByCategory.keys());
+  const droppedCategories = Array.from(previousByCategory.keys()).filter(
+    (category) => !currentByCategory.has(category),
+  );
+
+  return currentCategories
+    .concat(droppedCategories)
+    .map((category) => {
+      const total = currentByCategory.get(category) ?? 0;
+      const previousTotal = previousByCategory.get(category) ?? 0;
+      return {
+        category,
+        total,
+        previousTotal,
+        share: grandTotal > 0 ? total / grandTotal : 0,
+        change: percentChange(total, previousTotal),
+      };
+    })
+    .sort((a, b) => b.total - a.total);
 }
 
 /** Daily buckets get noisy past a month or so; step up to weeks then months. */
@@ -278,6 +365,11 @@ export function trendSeries(
   range: DateRange,
   granularity: Granularity = pickGranularity(range),
 ): TrendPoint[] {
+  // An inverted range holds no days. Without this, week and month granularity
+  // rewind the cursor behind `range.end` and emit a phantom bucket, while day
+  // granularity correctly emits nothing.
+  if (range.start > range.end) return [];
+
   const points: TrendPoint[] = [];
   const rangeEnd = parseISO(range.end);
 

@@ -15,11 +15,20 @@ export function formatDate(isoDate: string): string {
   });
 }
 
-export function todayISO(): string {
-  const now = new Date();
-  const offset = now.getTimezoneOffset();
-  const local = new Date(now.getTime() - offset * 60 * 1000);
+/**
+ * A Date's *local* calendar day as YYYY-MM-DD. Calling `toISOString()` directly
+ * would give the UTC day, which is the previous one between midnight and 01:00
+ * BST — enough to file an expense under the wrong day, or the wrong month when
+ * that day is the 1st.
+ */
+export function toISODate(date: Date): string {
+  const offset = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - offset * 60 * 1000);
   return local.toISOString().slice(0, 10);
+}
+
+export function todayISO(): string {
+  return toISODate(new Date());
 }
 
 export function monthKey(isoDate: string): string {
@@ -27,5 +36,5 @@ export function monthKey(isoDate: string): string {
 }
 
 export function isSameMonth(isoDate: string, reference: Date = new Date()): boolean {
-  return monthKey(isoDate) === monthKey(reference.toISOString().slice(0, 10));
+  return monthKey(isoDate) === monthKey(toISODate(reference));
 }

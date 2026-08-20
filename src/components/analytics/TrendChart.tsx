@@ -56,8 +56,11 @@ function TrendTooltip({ active, payload, label, comparisonLabel }: TrendTooltipP
 }
 
 export default function TrendChart({ current, previous, comparisonLabel }: TrendChartProps) {
-  // Align the two periods by bucket index — they are equal-length ranges, so
-  // bucket N of the previous period is the like-for-like counterpart.
+  // Align the two periods by bucket index: `previousRange` is month-aligned, so
+  // bucket N of the previous period is the same day-of-month as bucket N here.
+  // The two are not always the same length — a 28-day February compares against
+  // a 31-day January — and the x-axis belongs to the selected period, so any
+  // trailing previous buckets are clipped. The cards carry the full totals.
   const data: TrendDatum[] = current.map((point, index) => ({
     label: point.label,
     total: point.total,
